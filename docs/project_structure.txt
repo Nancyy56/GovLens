@@ -1,0 +1,122 @@
+.
+├── alembic
+│   ├── alembic.ini
+│   ├── env.py
+│   └── versions
+│       └── 20260612_0001_create_document_domain_tables.py
+├── app
+│   ├── api
+│   │   ├── dependencies.py
+│   │   ├── health.py
+│   │   ├── __init__.py
+│   │   ├── routes
+│   │   │   ├── ingestion.py
+│   │   │   ├── __init__.py
+│   │   │   └── query.py
+│   │   └── schemas.py
+│   ├── chunking
+│   │   ├── chunker.py
+│   │   ├── __init__.py
+│   │   ├── interfaces.py
+│   │   └── schemas.py
+│   ├── citations
+│   │   ├── builder.py
+│   │   ├── __init__.py
+│   │   └── schemas.py
+│   ├── classification
+│   │   ├── classifier.py
+│   │   ├── __init__.py
+│   │   ├── interfaces.py
+│   │   └── rules.py
+│   ├── comparison
+│   │   ├── engine.py
+│   │   ├── __init__.py
+│   │   └── schemas.py
+│   ├── core
+│   │   ├── config.py
+│   │   ├── constants.py
+│   │   └── __init__.py
+│   ├── db
+│   │   ├── database.py
+│   │   └── __init__.py
+│   ├── generation
+│   │   ├── generator.py
+│   │   ├── __init__.py
+│   │   ├── interfaces.py
+│   │   ├── ollama_client.py
+│   │   ├── prompt_builder.py
+│   │   └── schemas.py
+│   ├── ingestion
+│   │   ├── contracts.py
+│   │   ├── exceptions.py
+│   │   ├── __init__.py
+│   │   └── pdf_loader.py
+│   ├── __init__.py
+│   ├── main.py
+│   ├── metadata
+│   │   ├── extractors.py
+│   │   ├── __init__.py
+│   │   ├── interfaces.py
+│   │   ├── patterns.py
+│   │   ├── pipeline.py
+│   │   └── validators.py
+│   ├── repositories
+│   │   ├── documents.py
+│   │   └── __init__.py
+│   ├── retrieval
+│   │   ├── __init__.py
+│   │   ├── interfaces.py
+│   │   ├── retriever.py
+│   │   └── schemas.py
+│   ├── schemas
+│   │   ├── documents.py
+│   │   ├── __init__.py
+│   │   └── processing.py
+│   ├── services
+│   │   ├── dependencies.py
+│   │   ├── ingestion.py
+│   │   ├── __init__.py
+│   │   ├── query.py
+│   │   └── schemas.py
+│   ├── supersession
+│   │   ├── engine.py
+│   │   ├── __init__.py
+│   │   ├── interfaces.py
+│   │   └── schemas.py
+│   └── vectorstore
+│       ├── embedder.py
+│       ├── __init__.py
+│       ├── interfaces.py
+│       ├── qdrant_store.py
+│       ├── qdrant_store.py.bak
+│       ├── qdrant_store.py.pre_query_fix
+│       └── schemas.py
+├── docker
+│   └── README.md
+├── docker-compose.yml
+├── Dockerfile
+├── docs
+│   ├── architecture.md
+│   ├── assignment_mapping.md
+│   ├── interviewer_guide.md
+│   ├── known_limitations.md
+│   ├── project_review.md
+│   ├── project_structure.txt
+│   └── technical_report.md
+├── README.md
+├── requirements.txt
+├── RUNTIME_VALIDATION_REPORT.md
+└── tests
+    ├── __init__.py
+    ├── test_citations.py
+    ├── test_comparison.py
+    ├── test_document_chunker.py
+    ├── test_document_classifier.py
+    ├── test_generation.py
+    ├── test_metadata_framework.py
+    ├── test_pdf_loader.py
+    ├── test_retrieval.py
+    ├── test_rule_based_metadata_extractor.py
+    ├── test_services.py
+    ├── test_supersession.py
+    └── test_vectorstore.py

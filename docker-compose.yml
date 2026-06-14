@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database Service
+  postgres:
+    image: postgres:16-alpine
+    container_name: govlens-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-govlens}
+      POSTGRES_USER: ${POSTGRES_USER:-govlens_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Persist PostgreSQL data across container restarts
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-govlens_user} -d ${POSTGRES_DB:-govlens}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - govlens-network
+    restart: unless-stopped
+
+  # Qdrant Vector Database Service
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: govlens-qdrant
+    environment:
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant-key}
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      # Persist Qdrant data across container restarts
+      - qdrant_data:/qdrant/storage
+    networks:
+      - govlens-network
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: govlens-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - govlens-network
+    restart: unless-stopped
+
+  # FastAPI Application Service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: govlens-app
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-govlens}
+      POSTGRES_USER: ${POSTGRES_USER:-govlens_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant-key}
+      ENV: ${ENV:-development}
+      DEBUG: ${DEBUG:-True}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - qdrant
+    volumes:
+      # Mount source code for development with hot-reload
+      - .:/app
+    networks:
+      - govlens-network
+    restart: unless-stopped
+    command: sh -c "alembic -c alembic/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  postgres_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  ollama_data:
+    driver: local
+networks:
+  govlens-network:
+    driver: bridge

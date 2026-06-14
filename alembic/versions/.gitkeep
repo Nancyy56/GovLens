@@ -1,0 +1,6 @@
+"""
+Alembic script directory.
+
+This is a placeholder for database migration scripts.
+Generate migrations using: alembic revision --autogenerate -m "description"
+"""
