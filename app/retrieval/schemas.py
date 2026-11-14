@@ -28,10 +28,9 @@ class RetrievedChunk(BaseModel):
 
     chunk_text: str
 
-    score: float = Field(
-        ge=0.0,
-        le=1.0,
-    )
+    # Relevance score. Dense cosine scores can be negative; fused and
+    # reranked scores are normalized to 0..1.
+    score: float = 0.0
 
     issue_date: date | None = None
 

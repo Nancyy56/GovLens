@@ -7,7 +7,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import DocumentStatus, DocumentType, RelationshipType
+from app.models.enums import DocumentStatus, DocumentType, RelationshipOrigin, RelationshipType
 
 
 class DocumentCreate(BaseModel):
@@ -16,7 +16,7 @@ class DocumentCreate(BaseModel):
     title: str
     document_number: str
     document_type: DocumentType = DocumentType.UNKNOWN
-    issue_date: date
+    issue_date: date | None = None
     effective_date: date | None = None
     department: str | None = None
     subject: str | None = None
@@ -35,7 +35,7 @@ class DocumentRead(BaseModel):
     title: str
     document_number: str
     document_type: DocumentType
-    issue_date: date
+    issue_date: date | None
     effective_date: date | None
     department: str | None
     subject: str | None
@@ -88,4 +88,5 @@ class DocumentRelationshipRead(BaseModel):
     source_document_id: uuid.UUID
     target_document_id: uuid.UUID
     relationship_type: RelationshipType
+    origin: RelationshipOrigin = RelationshipOrigin.AUTO
     created_at: datetime

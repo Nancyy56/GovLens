@@ -130,3 +130,20 @@ def test_whitespace_only_page_skipped() -> None:
 
     assert len(chunks) == 1
     assert chunks[0].page_number == 2
+
+
+def test_line_breaks_are_preserved_in_chunk_text() -> None:
+    from datetime import UTC, datetime
+    import uuid
+
+    from app.schemas.processing import PageContent, RawDocument
+
+    raw = RawDocument(
+        document_id=uuid.uuid4(),
+        source_type="pdf",
+        source_path="x.pdf",
+        pages=[PageContent(page_number=1, text="Ministry of Finance\nNotification No. 12/2023\nThe rate is 5 percent. It applies now.")],
+        ingested_at=datetime.now(UTC),
+    )
+    chunk = RuleBasedDocumentChunker().chunk(raw)[0]
+    assert chunk.chunk_text == "Ministry of Finance\nNotification No. 12/2023\nThe rate is 5 percent. It applies now."

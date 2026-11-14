@@ -4,14 +4,22 @@ from __future__ import annotations
 
 from app.services.dependencies import (
     get_classifier,
+    get_comparison_service,
+    get_document_service,
     get_embedding_provider,
     get_ingestion_service,
+    get_job_runner,
     get_query_service,
     get_vector_store,
 )
-from app.services import DocumentIngestionService, QueryService
 
 __all__ = [
+    "get_classifier",
+    "get_comparison_service",
+    "get_document_service",
+    "get_embedding_provider",
     "get_ingestion_service",
+    "get_job_runner",
     "get_query_service",
+    "get_vector_store",
 ]

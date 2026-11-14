@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from types import SimpleNamespace
 from typing import Any
@@ -9,7 +10,8 @@ from typing import Any
 import pytest
 
 from app.ingestion.exceptions import DocumentLoadError
-from app.ingestion.pdf_loader import DoclingDocumentLoader, PyMuPDFDocumentLoader, get_document_loader
+from app.ingestion.pdf_loader import AutoPDFLoader, OCRDocumentLoader, PyMuPDFDocumentLoader, get_document_loader
+from app.schemas.processing import RawDocument
 
 
 class FakePage:
@@ -39,29 +41,23 @@ def install_fake_fitz(monkeypatch: pytest.MonkeyPatch, document: FakeDocument) -
     monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
 
 
-class FakeTextItem:
-    def __init__(self, text: str, page_no: int) -> None:
+class FakeImage:
+    def __init__(self, text: str) -> None:
         self.text = text
-        self.prov = [SimpleNamespace(page_no=page_no)]
 
 
-class FakeDoclingDocument:
-    def __init__(self, items: list[FakeTextItem]) -> None:
-        self.texts = items
+def install_fake_ocr(monkeypatch: pytest.MonkeyPatch, page_texts: list[str]) -> list[str]:
+    """Install fake pdf2image/pytesseract modules; returns a list recording converted paths."""
 
+    converted: list[str] = []
 
-class FakeConverter:
-    def __init__(self, document: FakeDoclingDocument) -> None:
-        self._document = document
+    def convert_from_path(path: str) -> list[FakeImage]:
+        converted.append(path)
+        return [FakeImage(text) for text in page_texts]
 
-    def convert(self, source: str) -> SimpleNamespace:
-        return SimpleNamespace(document=self._document)
-
-
-def install_fake_docling(monkeypatch: pytest.MonkeyPatch, document: FakeDoclingDocument) -> None:
-    fake_converter = FakeConverter(document)
-    fake_module = SimpleNamespace(DocumentConverter=lambda *a, **k: fake_converter)
-    monkeypatch.setitem(sys.modules, "docling.document_converter", fake_module)
+    monkeypatch.setitem(sys.modules, "pdf2image", SimpleNamespace(convert_from_path=convert_from_path))
+    monkeypatch.setitem(sys.modules, "pytesseract", SimpleNamespace(image_to_string=lambda image: image.text))
+    return converted
 
 
 # Existing PyMuPDF tests follow unchanged below...
@@ -112,68 +108,81 @@ def test_page_ordering(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     assert result.raw_text == "page one\npage two\npage three"
 
 
-# ---- DoclingDocumentLoader tests ----
+# ---- OCR loader tests ----
 
 
-def test_docling_loader_returns_raw_document(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+def test_ocr_loader_returns_one_page_per_image(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     pdf_path = tmp_path / "scanned.pdf"
     pdf_path.write_bytes(b"%PDF-1.7")
-    document = FakeDoclingDocument([
-        FakeTextItem("header text", 1),
-        FakeTextItem("body text", 1),
-        FakeTextItem("more body", 2),
-    ])
-    install_fake_docling(monkeypatch, document)
+    install_fake_ocr(monkeypatch, ["scanned one", "scanned two"])
 
-    result = DoclingDocumentLoader().load(str(pdf_path))
+    result = OCRDocumentLoader().load(str(pdf_path))
 
-    assert result.source_type == "pdf"
-    assert result.page_count == 2
-    assert result.raw_text == "header text\nbody text\nmore body"
     assert [page.page_number for page in result.pages] == [1, 2]
+    assert result.raw_text == "scanned one\nscanned two"
 
 
-def test_docling_loader_preserves_page_order(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+def test_ocr_loader_wraps_ocr_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     pdf_path = tmp_path / "scanned.pdf"
     pdf_path.write_bytes(b"%PDF-1.7")
-    document = FakeDoclingDocument([
-        FakeTextItem("page three text", 3),
-        FakeTextItem("page one text", 1),
-        FakeTextItem("page two text", 2),
-    ])
-    install_fake_docling(monkeypatch, document)
 
-    result = DoclingDocumentLoader().load(str(pdf_path))
+    def broken(path: str) -> list[FakeImage]:
+        raise RuntimeError("poppler missing")
 
-    assert [page.page_number for page in result.pages] == [1, 2, 3]
-    assert result.pages[0].text == "page one text"
-    assert result.pages[2].text == "page three text"
-
-
-def test_docling_loader_handles_empty_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-    pdf_path = tmp_path / "scanned.pdf"
-    pdf_path.write_bytes(b"%PDF-1.7")
-    document = FakeDoclingDocument([
-        FakeTextItem("", 1),
-        FakeTextItem("   ", 2),
-        FakeTextItem("real text", 2),
-    ])
-    install_fake_docling(monkeypatch, document)
-
-    result = DoclingDocumentLoader().load(str(pdf_path))
-
-    assert result.page_count == 1
-    assert result.pages[0].page_number == 2
-    assert result.pages[0].text == "real text"
-
-
-def test_docling_loader_wraps_import_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-    pdf_path = tmp_path / "scanned.pdf"
-    pdf_path.write_bytes(b"%PDF-1.7")
-    monkeypatch.setitem(sys.modules, "docling.document_converter", None)
+    monkeypatch.setitem(sys.modules, "pdf2image", SimpleNamespace(convert_from_path=broken))
+    monkeypatch.setitem(sys.modules, "pytesseract", SimpleNamespace(image_to_string=lambda image: ""))
 
     with pytest.raises(DocumentLoadError):
-        DoclingDocumentLoader().load(str(pdf_path))
+        OCRDocumentLoader().load(str(pdf_path))
+
+
+# ---- Content hash ----
+
+
+def test_loader_sets_content_hash_of_file_bytes(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    pdf_path = tmp_path / "notice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.7 unique bytes")
+    install_fake_fitz(monkeypatch, FakeDocument(["text"]))
+
+    result = PyMuPDFDocumentLoader().load(str(pdf_path))
+
+    assert result.content_hash == hashlib.sha256(b"%PDF-1.7 unique bytes").hexdigest()
+
+
+# ---- AutoPDFLoader ----
+
+
+def test_auto_loader_reads_digital_pdf_once_without_ocr(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    pdf_path = tmp_path / "digital.pdf"
+    pdf_path.write_bytes(b"%PDF-1.7")
+    install_fake_fitz(monkeypatch, FakeDocument(["a" * 100, "b" * 100]))
+    converted = install_fake_ocr(monkeypatch, ["should not be used"])
+    calls: list[str] = []
+    original_load = PyMuPDFDocumentLoader.load
+
+    def counting_load(self, path: str) -> RawDocument:
+        calls.append(path)
+        return original_load(self, path)
+
+    monkeypatch.setattr(PyMuPDFDocumentLoader, "load", counting_load)
+
+    result = AutoPDFLoader().load(str(pdf_path))
+
+    assert calls == [str(pdf_path)]
+    assert converted == []
+    assert result.pages[0].text == "a" * 100
+
+
+def test_auto_loader_falls_back_to_ocr_for_scans(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"%PDF-1.7")
+    install_fake_fitz(monkeypatch, FakeDocument(["", "", "short"]))
+    converted = install_fake_ocr(monkeypatch, ["ocr page one", "ocr page two", "ocr page three"])
+
+    result = AutoPDFLoader().load(str(pdf_path))
+
+    assert converted == [str(pdf_path)]
+    assert result.pages[0].text == "ocr page one"
 
 
 def test_factory_returns_pymupdf_for_digital_pdf(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
@@ -186,19 +195,14 @@ def test_factory_returns_pymupdf_for_digital_pdf(monkeypatch: pytest.MonkeyPatch
     assert isinstance(loader, PyMuPDFDocumentLoader)
 
 
-def test_factory_returns_docling_for_empty_pdf(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+def test_factory_returns_ocr_for_empty_pdf(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     pdf_path = tmp_path / "scanned.pdf"
     pdf_path.write_bytes(b"%PDF-1.7")
     install_fake_fitz(monkeypatch, FakeDocument(["", "", ""]))
-    document = FakeDoclingDocument([
-        FakeTextItem("scanned page one", 1),
-        FakeTextItem("scanned page two", 2),
-    ])
-    install_fake_docling(monkeypatch, document)
 
     loader = get_document_loader(str(pdf_path))
 
-    assert isinstance(loader, DoclingDocumentLoader)
+    assert isinstance(loader, OCRDocumentLoader)
 
 
 def test_factory_raises_on_pymupdf_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:

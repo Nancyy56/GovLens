@@ -22,7 +22,7 @@ from app.core.constants import (
 # Pool settings optimize for typical web application workloads
 engine = create_engine(
     settings.database_url,
-    echo=settings.debug,
+    echo=settings.db_echo,
     pool_size=DB_POOL_SIZE,
     max_overflow=DB_MAX_OVERFLOW,
     pool_timeout=DB_POOL_TIMEOUT,

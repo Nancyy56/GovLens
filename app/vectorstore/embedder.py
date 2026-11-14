@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 import hashlib
-from typing import TYPE_CHECKING, Protocol, Sequence
+import threading
+from typing import TYPE_CHECKING, Sequence
 
 from app.vectorstore.interfaces import EmbeddingProvider
 
 if TYPE_CHECKING:
-    import numpy as np
     from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class HuggingFaceEmbeddingProvider:
         self.batch_size = batch_size
         self.device = device
         self._model: "SentenceTransformer | None" = None
+        self._lock = threading.Lock()
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         model = self._load_model()
@@ -75,7 +76,11 @@ class HuggingFaceEmbeddingProvider:
         return embeddings.tolist()
 
     def _load_model(self) -> "SentenceTransformer":
-        if self._model is None:
+        if self._model is not None:
+            return self._model
+        with self._lock:
+            if self._model is not None:
+                return self._model
             try:
                 from sentence_transformers import SentenceTransformer
             except ImportError as exc:
@@ -83,5 +88,6 @@ class HuggingFaceEmbeddingProvider:
                     "sentence-transformers is required for HuggingFaceEmbeddingProvider. "
                     "Install it with: pip install sentence-transformers"
                 ) from exc
+            logger.info("Loading embedding model %s", self.model_name)
             self._model = SentenceTransformer(self.model_name, device=self.device)
-        return self._model
+            return self._model
