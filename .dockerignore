@@ -71,3 +71,9 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+node_modules/
+frontend/node_modules/
+frontend/dist/
+data/
+backups/
+.env

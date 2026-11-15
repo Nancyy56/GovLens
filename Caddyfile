@@ -1,0 +1,24 @@
+# Reverse proxy with automatic HTTPS (Let's Encrypt).
+# Set GOVLENS_DOMAIN in .env.production, e.g. govlens.example.org. Use `localhost` for a local trial.
+{$GOVLENS_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	request_body {
+		max_size 60MB
+	}
+
+	# Streaming answers must not be buffered.
+	reverse_proxy app:8000 {
+		flush_interval -1
+		header_up X-Forwarded-For {remote_host}
+	}
+}

@@ -1,0 +1,24 @@
+# Optional: run Ollama on an NVIDIA GPU without nvidia-container-toolkit, by passing the
+# device files and the host's driver libraries straight into the container.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d ollama
+# (or set COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml in .env)
+# Library versions below must match the host driver (check: nvidia-smi). With
+# nvidia-container-toolkit installed, use a `deploy.resources.reservations.devices` entry instead.
+services:
+  ollama:
+    devices:
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+    volumes:
+      - /usr/lib/libcuda.so.610.57.04:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
+      - /usr/lib/libnvidia-ml.so.610.57.04:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+      - /usr/lib/libnvidia-ptxjitcompiler.so.610.57.04:/usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1:ro
+      - /usr/lib/libnvidia-nvvm.so.610.57.04:/usr/lib/x86_64-linux-gnu/libnvidia-nvvm.so.4:ro
+      - /usr/lib/libnvidia-gpucomp.so.610.57.04:/usr/lib/x86_64-linux-gnu/libnvidia-gpucomp.so.610.57.04:ro
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      # Smaller KV cache so the whole model fits in 4 GB of VRAM.
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: q8_0
