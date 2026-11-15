@@ -20,6 +20,8 @@ class EmbeddedChunk(BaseModel):
     document_type: DocumentType | None = None
     page_number: int = Field(ge=1)
     chunk_index: int = Field(ge=0)
+    # Long chunks are embedded as several overlapping windows; all share chunk_text.
+    window_index: int = Field(default=0, ge=0)
     chunk_text: str
     embedding: list[float]
     metadata: dict[str, Any] | None = None

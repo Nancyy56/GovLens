@@ -108,3 +108,37 @@ def test_metadata_none_uses_rules() -> None:
 
     assert result.document_type == DocumentType.NOTIFICATION
     assert result.confidence_score == 0.95
+
+
+def _raw(text: str):
+    import uuid
+    from datetime import UTC, datetime
+
+    from app.schemas.processing import PageContent, RawDocument
+
+    return RawDocument(
+        document_id=uuid.uuid4(), source_type="pdf", source_path="x.pdf",
+        pages=[PageContent(page_number=1, text=text)], ingested_at=datetime.now(UTC),
+    )
+
+
+def test_heading_beats_passing_mention() -> None:
+    text = "ANNUAL REVIEW ON THE PERFORMANCE OF INTERNAL AUDIT WING\n" + "filler text. " * 200 + "as per the Policy."
+    assert RuleBasedDocumentClassifier().classify(_raw(text)).document_type == DocumentType.REPORT
+
+
+def test_single_weak_word_in_body_is_ignored() -> None:
+    text = "Minutes of the meeting\n" + "filler text. " * 200 + "aligned with the Policy."
+    assert RuleBasedDocumentClassifier().classify(_raw(text)).document_type == DocumentType.UNKNOWN
+
+
+def test_recurring_weak_word_in_body_counts_with_low_confidence() -> None:
+    text = "Minutes\n" + "filler text. " * 200 + "Policy one. Policy two. Policy three."
+    result = RuleBasedDocumentClassifier().classify(_raw(text))
+    assert result.document_type == DocumentType.POLICY
+    assert result.confidence_score == 0.5
+
+
+def test_explicit_number_anywhere_still_classifies() -> None:
+    text = "Government of India\n" + "filler text. " * 200 + "This is Circular No. 4/2024."
+    assert RuleBasedDocumentClassifier().classify(_raw(text)).document_type == DocumentType.CIRCULAR

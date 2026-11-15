@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Optional, List
+from typing import List, Optional
 
-from app.classification.rules import build_compiled_patterns
+from app.classification.rules import (
+    BODY_ONLY_CONFIDENCE,
+    HEADER_CHARS,
+    MIN_BODY_OCCURRENCES,
+    STRONG_CONFIDENCE,
+    build_compiled_patterns,
+)
 from app.models.enums import DocumentType
 from app.schemas.processing import DocumentClassificationResult, DocumentMetadata, RawDocument
 
@@ -14,8 +20,11 @@ class RuleBasedDocumentClassifier:
 
     Priority:
     1. If metadata already carries a concrete document_type, reuse it.
-    2. Otherwise search raw_text for the first matching classification pattern.
-    3. Fall back to UNKNOWN when no signal is found.
+    2. Otherwise use the first pattern (in priority order) found in the
+       document heading.
+    3. Otherwise use an explicit pattern ("Circular No.") anywhere, or a weak
+       single-word pattern ("Policy") only if it recurs in the body.
+    4. Fall back to UNKNOWN when no signal is found.
     """
 
     def __init__(
@@ -46,11 +55,19 @@ class RuleBasedDocumentClassifier:
                 confidence_score=0.95,
             )
 
+        header = text[:HEADER_CHARS]
         for doc_type, pattern, confidence in self._patterns:
-            if pattern.search(text):
+            if pattern.search(header):
+                return DocumentClassificationResult(document_type=doc_type, confidence_score=confidence)
+
+        for doc_type, pattern, confidence in self._patterns:
+            if confidence >= STRONG_CONFIDENCE and pattern.search(text):
+                return DocumentClassificationResult(document_type=doc_type, confidence_score=confidence)
+        for doc_type, pattern, confidence in self._patterns:
+            if confidence < STRONG_CONFIDENCE and len(pattern.findall(text)) >= MIN_BODY_OCCURRENCES:
                 return DocumentClassificationResult(
                     document_type=doc_type,
-                    confidence_score=confidence,
+                    confidence_score=min(confidence, BODY_ONLY_CONFIDENCE),
                 )
 
         return DocumentClassificationResult(

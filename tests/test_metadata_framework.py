@@ -120,5 +120,5 @@ def test_pipeline_supports_future_strategy_chaining() -> None:
     assert result.metadata is metadata
     assert result.errors == []
     assert result.warnings == [
-        "LLM metadata extraction is not implemented.",
+        "LLM metadata extraction is not configured.",
     ]

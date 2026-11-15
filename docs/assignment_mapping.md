@@ -250,16 +250,16 @@ Requirement:
 Prepare comparison input across multiple sources.
 
 Status:
-PARTIAL
+IMPLEMENTED
 
 Implementation Location:
-`app/comparison/engine.py`
+`app/comparison/engine.py`, `app/comparison/differ.py`, `app/services/comparison.py`, `app/api/routes/compare.py`
 
 Evidence:
-`ComparisonEngine.prepare`
+`ComparisonEngine.prepare`, `DocumentDiffer.diff`, `ComparisonService.compare`, `POST /api/v1/compare`
 
 Notes:
-The engine groups chunks by source document and page. It does not perform explicit diff, contradiction, or policy-change analysis.
+Query-time grouping orders sources by relevance and adds an agree/differ instruction when sources span documents. `POST /compare` produces a sentence-level diff (added/removed/modified with pages) and an optional LLM summary restricted to the detected changes.
 
 ---
 
@@ -284,16 +284,16 @@ Requirement:
 Check supersession relationships.
 
 Status:
-PARTIAL
+IMPLEMENTED
 
 Implementation Location:
-`app/supersession/engine.py`, `app/models/documents.py`, `app/services/query.py`
+`app/supersession/engine.py`, `app/supersession/linker.py`, `app/metadata/extractors.py`, `app/services/query.py`
 
 Evidence:
-`DatabaseSupersessionEngine.check_document`, `DatabaseSupersessionEngine._build_chain`, `QueryService._check_supersession`
+`DatabaseSupersessionEngine.check_document`, `DocumentRelationshipLinker.link_new_document`, `RuleBasedMetadataExtractor._extract_mentions`, `QueryService._check_supersession`
 
 Notes:
-The engine can traverse `SUPERSEDES` chains in PostgreSQL. Query flow checks only the first retrieved chunk's document id.
+Links are detected from document text at ingestion (pending ones resolve when the referenced document arrives) and can be added manually. Every distinct retrieved document is checked at query time.
 
 ---
 
@@ -327,7 +327,7 @@ Evidence:
 `OllamaClient`, `LLMAnswerGenerator`, `get_query_service`
 
 Notes:
-The client calls `http://ollama:11434/api/generate` with model `qwen3:8b`, `stream=false`, `temperature=0`, and `num_predict=512`.
+The client calls the configured Ollama URL (`OLLAMA_BASE_URL`) with the configured model (default `qwen3:4b-instruct`), `temperature=0`, streaming or not, and JSON mode for metadata extraction.
 
 ---
 
@@ -369,16 +369,16 @@ Requirement:
 Support authentication and authorization.
 
 Status:
-NOT IMPLEMENTED
+IMPLEMENTED
 
 Implementation Location:
-Not found
+`app/services/auth.py`, `app/api/security.py`, `app/api/routes/auth.py`, `app/api/routes/users.py`
 
 Evidence:
-No verified authentication or authorization implementation in `app/api`, `app/main.py`, or dependency wiring.
+`AuthService.login`, `AuthService.authenticate`, `current_principal`, `require(UserRole)`, migration `20261106_0003`
 
 Notes:
-Endpoints are publicly accessible.
+Username/password accounts (scrypt), hashed session tokens with expiry, roles VIEWER/EDITOR/ADMIN enforced per route, service API keys with roles, per-user and per-IP rate limits shared through PostgreSQL. Roles govern actions, not per-document visibility.
 
 ---
 
@@ -386,16 +386,16 @@ Requirement:
 Support streaming responses.
 
 Status:
-NOT IMPLEMENTED
+IMPLEMENTED
 
 Implementation Location:
-Not found
+`app/generation/ollama_client.py`, `app/generation/generator.py`, `app/services/query.py`, `app/api/routes/query.py`
 
 Evidence:
-`OllamaClient.generate` sends `stream=false`; API routes return complete response models.
+`OllamaClient.generate_stream`, `LLMAnswerGenerator.stream`, `QueryService.stream`, `POST /api/v1/query/stream`
 
 Notes:
-There is no `StreamingResponse` or streaming endpoint implementation.
+Server-sent events: `retrieval`, `token` pieces, then `done` with the final result (or `error`).
 
 ---
 
@@ -403,16 +403,16 @@ Requirement:
 Provide hybrid retrieval.
 
 Status:
-NOT IMPLEMENTED
+IMPLEMENTED
 
 Implementation Location:
-Not found
+`app/retrieval/keyword.py`, `app/retrieval/hybrid.py`, `alembic/versions/20261106_0002_references_jobs_and_search.py`
 
 Evidence:
-No BM25, sparse vector, reciprocal rank fusion, or hybrid retrieval implementation found.
+`PostgresKeywordSearcher`, `reciprocal_rank_fusion`, `HybridDocumentRetriever`, GIN index `ix_document_chunks_fts`
 
 Notes:
-Retrieval is dense-vector only.
+Dense Qdrant search fused with PostgreSQL full-text search (with exact document-number boost) via Reciprocal Rank Fusion.
 
 ---
 
@@ -420,16 +420,16 @@ Requirement:
 Provide reranking.
 
 Status:
-NOT IMPLEMENTED
+IMPLEMENTED
 
 Implementation Location:
-Not found
+`app/retrieval/reranker.py`
 
 Evidence:
-No cross-encoder, reranker, or post-retrieval ranking implementation found.
+`CrossEncoderReranker.rerank`
 
 Notes:
-Retrieved chunks are sorted by Qdrant score.
+Cross-encoder `cross-encoder/ms-marco-MiniLM-L-6-v2` rescores the fused candidates; disabled with a logged error if the model cannot load.
 
 ---
 
@@ -437,13 +437,13 @@ Requirement:
 Provide automated RAG evaluation.
 
 Status:
-NOT IMPLEMENTED
+IMPLEMENTED
 
 Implementation Location:
-Not found
+`eval/dataset.json`, `eval/run_eval.py`, `eval/make_sample_pdfs.py`
 
 Evidence:
-No precision, recall, faithfulness, citation accuracy, or evaluation harness found.
+`run_eval.py` metrics: hit rate, MRR, answer contains, abstention accuracy, citation precision, supersession warnings, latency
 
 Notes:
-Tests exist for individual components, but there is no automated end-to-end RAG quality evaluation framework.
+The dataset is small (nine questions over three documents); it detects regressions rather than benchmarking quality.

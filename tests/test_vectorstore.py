@@ -47,10 +47,7 @@ class TestEmbeddingProvider:
 
     def test_huggingface_embedder_raises_without_sentence_transformers(self) -> None:
         with patch.dict("sys.modules", {"sentence_transformers": None}):
-            provider = HuggingFaceEmbeddingProvider.__new__(HuggingFaceEmbeddingProvider)
-            provider.model_name = "BAAI/bge-small-en-v1.5"
-            provider.batch_size = 32
-            provider.device = None
+            provider = HuggingFaceEmbeddingProvider(model_name="BAAI/bge-small-en-v1.5", batch_size=32, device=None)
             provider._model = None
             with pytest.raises(RuntimeError, match="sentence-transformers is required"):
                 provider.embed(["test"])
@@ -58,10 +55,7 @@ class TestEmbeddingProvider:
 
 class TestHuggingFaceEmbeddingProvider:
     def test_embed_returns_list_of_lists(self) -> None:
-        provider = HuggingFaceEmbeddingProvider.__new__(HuggingFaceEmbeddingProvider)
-        provider.model_name = "BAAI/bge-small-en-v1.5"
-        provider.batch_size = 32
-        provider.device = None
+        provider = HuggingFaceEmbeddingProvider(model_name="BAAI/bge-small-en-v1.5", batch_size=32, device=None)
         provider._model = MagicMock()
         provider._model.encode.return_value.tolist.return_value = [
             [0.1] * 384,
@@ -73,10 +67,7 @@ class TestHuggingFaceEmbeddingProvider:
         provider._model.encode.assert_called_once()
 
     def test_lazy_model_loading(self) -> None:
-        provider = HuggingFaceEmbeddingProvider.__new__(HuggingFaceEmbeddingProvider)
-        provider.model_name = "BAAI/bge-small-en-v1.5"
-        provider.batch_size = 16
-        provider.device = "cpu"
+        provider = HuggingFaceEmbeddingProvider(model_name="BAAI/bge-small-en-v1.5", batch_size=16, device="cpu")
         provider._model = None
 
         fake_model = MagicMock()
@@ -130,9 +121,35 @@ class TestQdrantVectorStore:
         store.api_key = None
         store._vector_size = 384
         store._client = MagicMock()
-        store._client.search.return_value = []
+        store._client.get_collections.return_value.collections = [SimpleNamespace(name=COLLECTION_NAME)]
+        store._client.query_points.return_value.points = [
+            SimpleNamespace(id="p1", score=0.42, payload={"document_id": "d1"}),
+        ]
+
         result = store.search([0.0] * 384, limit=5)
-        assert isinstance(result, list)
+
+        assert result == [{"id": "p1", "score": 0.42, "payload": {"document_id": "d1"}}]
+        assert store._client.query_points.call_args.kwargs["limit"] == 5
+
+    def test_search_without_collection_returns_empty(self) -> None:
+        store = QdrantVectorStore()
+        store._client = MagicMock()
+        store._client.get_collections.return_value.collections = []
+
+        assert store.search([0.0] * 384) == []
+        store._client.query_points.assert_not_called()
+
+    def test_delete_document_filters_by_document_id(self) -> None:
+        store = QdrantVectorStore()
+        store._client = MagicMock()
+        store._client.get_collections.return_value.collections = [SimpleNamespace(name=COLLECTION_NAME)]
+
+        store.delete_document("abc")
+
+        selector = store._client.delete.call_args.kwargs["points_selector"]
+        condition = selector.filter.must[0]
+        assert condition.key == "document_id"
+        assert condition.match.value == "abc"
 
     def test_upsert_with_empty_chunks_is_noop(self) -> None:
         store = QdrantVectorStore.__new__(QdrantVectorStore)

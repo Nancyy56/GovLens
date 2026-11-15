@@ -1,15 +1,16 @@
 """Digital and scanned PDF loaders.
 
-Digital PDFs are loaded with PyMuPDF. Scanned PDFs are loaded with Docling.
-Both loaders preserve page order and one-based page numbers.
+Digital PDFs are loaded with PyMuPDF. Scanned PDFs are loaded with Tesseract
+OCR. ``AutoPDFLoader`` reads a file once with PyMuPDF and only falls back to
+OCR when too few pages contain text. All loaders preserve page order and
+one-based page numbers.
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 import logging
-from pdf2image import convert_from_path
-import pytesseract
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,14 +21,59 @@ from app.schemas.processing import PageContent, RawDocument
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TEXT_THRESHOLD = 50
+DEFAULT_MIN_TEXTFUL_PAGES_RATIO = 0.5
+
+
+def compute_file_hash(file_path: str | Path) -> str:
+    """Return the SHA-256 hex digest of a file's bytes."""
+
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _validate_pdf_path(file_path: str) -> Path:
+    path = Path(file_path)
+    if path.suffix.lower() != ".pdf":
+        raise UnsupportedDocumentError(f"Unsupported document type for path: {file_path}")
+
+    if not path.is_file():
+        raise DocumentLoadError(f"PDF file does not exist: {file_path}")
+    return path
+
+
+def _build_raw_document(path: Path, pages: list[PageContent], source_type: str) -> RawDocument:
+    return RawDocument(
+        document_id=uuid.uuid4(),
+        source_type=source_type,
+        source_path=str(path),
+        pages=pages,
+        ingested_at=datetime.now(UTC),
+        content_hash=compute_file_hash(path),
+    )
+
+
+def is_mostly_text(
+    raw_document: RawDocument,
+    text_threshold: int = DEFAULT_TEXT_THRESHOLD,
+    min_textful_pages_ratio: float = DEFAULT_MIN_TEXTFUL_PAGES_RATIO,
+) -> bool:
+    """Return True when enough pages carry a usable text layer."""
+
+    if not raw_document.pages:
+        return False
+    textful = sum(1 for p in raw_document.pages if len(p.text.strip()) >= text_threshold)
+    return textful / len(raw_document.pages) >= min_textful_pages_ratio
+
 
 class PyMuPDFDocumentLoader(DocumentLoader):
     """Load text from digitally-born PDFs using PyMuPDF.
 
     The loader preserves page order and one-based page numbers so downstream
     citation generation can map extracted text back to the original PDF pages.
-    OCR can be added later behind a separate loader without changing this
-    contract.
     """
 
     source_type = "pdf"
@@ -35,13 +81,7 @@ class PyMuPDFDocumentLoader(DocumentLoader):
     def load(self, file_path: str) -> RawDocument:
         """Extract ordered page text from a digital PDF file."""
 
-        path = Path(file_path)
-        if path.suffix.lower() != ".pdf":
-            raise UnsupportedDocumentError(f"Unsupported document type for path: {file_path}")
-
-        if not path.is_file():
-            raise DocumentLoadError(f"PDF file does not exist: {file_path}")
-
+        path = _validate_pdf_path(file_path)
         fitz = self._load_pymupdf()
         document: Any | None = None
 
@@ -59,13 +99,7 @@ class PyMuPDFDocumentLoader(DocumentLoader):
             if document is not None:
                 document.close()
 
-        return RawDocument(
-            document_id=uuid.uuid4(),
-            source_type=self.source_type,
-            source_path=str(path),
-            pages=pages,
-            ingested_at=datetime.now(UTC),
-        )
+        return _build_raw_document(path, pages, self.source_type)
 
     def _load_pymupdf(self) -> Any:
         """Import PyMuPDF lazily so tests can provide a lightweight fake."""
@@ -84,83 +118,68 @@ class OCRDocumentLoader(DocumentLoader):
     source_type = "pdf"
 
     def load(self, file_path: str) -> RawDocument:
-        path = Path(file_path)
+        path = _validate_pdf_path(file_path)
 
-        if path.suffix.lower() != ".pdf":
-            raise UnsupportedDocumentError(
-                f"Unsupported document type for path: {file_path}"
-            )
-
-        if not path.is_file():
-            raise DocumentLoadError(
-                f"PDF file does not exist: {file_path}"
-            )
+        try:
+            from pdf2image import convert_from_path
+            import pytesseract
+        except ImportError as exc:
+            raise DocumentLoadError("pdf2image and pytesseract are required for OCR.") from exc
 
         try:
             images = convert_from_path(str(path))
-
             pages = [
-                PageContent(
-                    page_number=i,
-                    text=pytesseract.image_to_string(image),
-                )
+                PageContent(page_number=i, text=pytesseract.image_to_string(image))
                 for i, image in enumerate(images, start=1)
             ]
-
         except Exception as exc:
-            raise DocumentLoadError(
-                f"Failed to OCR PDF: {file_path}"
-            ) from exc
+            raise DocumentLoadError(f"Failed to OCR PDF: {file_path}") from exc
 
-        return RawDocument(
-            document_id=uuid.uuid4(),
-            source_type=self.source_type,
-            source_path=str(path),
-            pages=pages,
-            ingested_at=datetime.now(UTC),
-        )
-    
+        return _build_raw_document(path, pages, self.source_type)
+
+
+class AutoPDFLoader(DocumentLoader):
+    """Read a PDF once with PyMuPDF and OCR it only when it looks scanned.
+
+    The PyMuPDF result is returned directly for digital PDFs, so the file is
+    parsed a single time on the common path.
+    """
+
+    def __init__(
+        self,
+        digital_loader: DocumentLoader | None = None,
+        ocr_loader: DocumentLoader | None = None,
+        text_threshold: int = DEFAULT_TEXT_THRESHOLD,
+        min_textful_pages_ratio: float = DEFAULT_MIN_TEXTFUL_PAGES_RATIO,
+    ) -> None:
+        self.digital_loader = digital_loader or PyMuPDFDocumentLoader()
+        self.ocr_loader = ocr_loader or OCRDocumentLoader()
+        self.text_threshold = text_threshold
+        self.min_textful_pages_ratio = min_textful_pages_ratio
+
+    def load(self, file_path: str) -> RawDocument:
+        digital = self.digital_loader.load(file_path)
+        if is_mostly_text(digital, self.text_threshold, self.min_textful_pages_ratio):
+            logger.info("Using PyMuPDF text for %s (%s pages)", file_path, digital.page_count)
+            return digital
+
+        logger.info("Falling back to OCR for %s (%s pages with little text)", file_path, digital.page_count)
+        return self.ocr_loader.load(file_path)
+
+
 def get_document_loader(
     file_path: str,
-    text_threshold: int = 50,
-    min_textful_pages_ratio: float = 0.5,
+    text_threshold: int = DEFAULT_TEXT_THRESHOLD,
+    min_textful_pages_ratio: float = DEFAULT_MIN_TEXTFUL_PAGES_RATIO,
 ) -> DocumentLoader:
     """Return the appropriate loader for the supplied PDF.
 
     Probes the file with PyMuPDF first. If enough pages contain substantive
     text, the digital loader is used. Otherwise the scanned (OCR) loader
-    is returned.
+    is returned. Prefer ``AutoPDFLoader`` in pipelines: it avoids parsing the
+    file twice.
     """
-    logger.info("Probing PDF loader for %s", file_path)
     probe = PyMuPDFDocumentLoader().load(file_path)
-    raw_text_length = len(probe.raw_text)
-    logger.info(
-        "PyMuPDF probe extracted %s pages and %s characters from %s",
-        probe.page_count,
-        raw_text_length,
-        file_path,
-    )
-
-    if not probe.pages:
-        logger.info("Selecting OCRDocumentLoader for %s because no pages were extracted", file_path)
-        return OCRDocumentLoader()
-    textful = sum(1 for p in probe.pages if len(p.text.strip()) >= text_threshold)
-    ratio = textful / len(probe.pages)
-
-    if ratio >= min_textful_pages_ratio:
-        logger.info(
-            "Selecting PyMuPDFDocumentLoader for %s; textful_pages=%s total_pages=%s ratio=%.2f",
-            file_path,
-            textful,
-            len(probe.pages),
-            ratio,
-        )
+    if is_mostly_text(probe, text_threshold, min_textful_pages_ratio):
         return PyMuPDFDocumentLoader()
-    logger.info(
-        "Selecting OCRDocumentLoader for %s; textful_pages=%s total_pages=%s ratio=%.2f",
-        file_path,
-        textful,
-        len(probe.pages),
-        ratio,
-    )
     return OCRDocumentLoader()

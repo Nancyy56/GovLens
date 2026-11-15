@@ -45,15 +45,62 @@ class QdrantVectorStore:
 
         if self._vector_size is None:
             self._vector_size = len(vectors[0])
-            self._ensure_collection(client)
+        # The store is long-lived, so re-check in case the collection was dropped.
+        self._ensure_collection(client)
 
         points = []
         for chunk, vector in zip(chunks, vectors):
-            point_id = str(uuid.uuid5(chunk.document_id, f"{chunk.page_number}:{chunk.chunk_index}"))
+            key = f"{chunk.page_number}:{chunk.chunk_index}"
+            if chunk.window_index:
+                key += f":{chunk.window_index}"
+            point_id = str(uuid.uuid5(chunk.document_id, key))
             payload = self._build_payload(chunk)
             points.append({"id": point_id, "vector": vector, "payload": payload})
 
         client.upsert(collection_name=self.collection, points=points)
+
+    def delete_document(self, document_id: uuid.UUID | str) -> None:
+        """Remove every vector belonging to a document. Missing collections are a no-op."""
+
+        client = self._get_client()
+        if not self._collection_exists(client):
+            return
+        from qdrant_client.http.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+        client.delete(
+            collection_name=self.collection,
+            points_selector=FilterSelector(
+                filter=Filter(must=[FieldCondition(key="document_id", match=MatchValue(value=str(document_id)))])
+            ),
+        )
+
+    def list_document_ids(self, batch_size: int = 512) -> set[str]:
+        """Return the distinct document ids that have vectors stored."""
+
+        client = self._get_client()
+        if not self._collection_exists(client):
+            return set()
+        document_ids: set[str] = set()
+        offset = None
+        while True:
+            points, offset = client.scroll(
+                collection_name=self.collection,
+                limit=batch_size,
+                offset=offset,
+                with_payload=["document_id"],
+                with_vectors=False,
+            )
+            for point in points:
+                if point.payload and point.payload.get("document_id"):
+                    document_ids.add(point.payload["document_id"])
+            if offset is None:
+                return document_ids
+
+    def ping(self) -> None:
+        """Raise if Qdrant is unreachable."""
+
+        self._get_client().get_collections()
+
     def search(
         self,
         query_vector: Sequence[float],
@@ -61,6 +108,8 @@ class QdrantVectorStore:
         filters: dict | None = None,
     ) -> list[dict]:
         client = self._get_client()
+        if not self._collection_exists(client):
+            return []
 
         qdrant_filters = (
             self._build_filters(filters)
@@ -95,15 +144,16 @@ class QdrantVectorStore:
                     "qdrant-client is required for QdrantVectorStore. "
                     "Install it with: pip install qdrant-client"
                 ) from exc
-            host=self.host
-            self._client = QdrantClient(url=f"http://{self.host}:{self.port}")
+            self._client = QdrantClient(url=f"http://{self.host}:{self.port}", api_key=self.api_key)
         return self._client
+
+    def _collection_exists(self, client) -> bool:
+        return self.collection in [c.name for c in client.get_collections().collections]
 
     def _ensure_collection(self, client) -> None:
         from qdrant_client.http.models import Distance, VectorParams
 
-        existing = [c.name for c in client.get_collections().collections]
-        if self.collection not in existing:
+        if not self._collection_exists(client):
             client.create_collection(
                 collection_name=self.collection,
                 vectors_config=VectorParams(size=self._vector_size, distance=Distance.COSINE),

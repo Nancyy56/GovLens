@@ -15,6 +15,7 @@ from app.schemas.documents import (
 )
 from app.schemas.processing import (
     DocumentClassificationResult,
+    DocumentMention,
     MetadataExtractionResult,
     MetadataValidationResult,
     DocumentMetadata,
@@ -28,6 +29,7 @@ __all__ = [
     "DocumentChunkRead",
     "DocumentClassificationResult",
     "DocumentCreate",
+    "DocumentMention",
     "DocumentMetadata",
     "MetadataExtractionResult",
     "MetadataValidationResult",

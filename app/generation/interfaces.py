@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Protocol
-
-from app.generation.schemas import GeneratedAnswer
 
 
 class LLMClient(Protocol):
@@ -12,4 +11,12 @@ class LLMClient(Protocol):
 
     def generate(self, prompt: str) -> str:
         """Return the raw text completion for the supplied prompt."""
+        ...
+
+
+class StreamingLLMClient(LLMClient, Protocol):
+    """An LLM client that can also yield the completion incrementally."""
+
+    def generate_stream(self, prompt: str) -> Iterator[str]:
+        """Yield pieces of the completion as they are produced."""
         ...

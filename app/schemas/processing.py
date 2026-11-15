@@ -13,7 +13,7 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.enums import DocumentType
+from app.models.enums import DocumentType, RelationshipType
 
 
 class PageContent(BaseModel):
@@ -42,6 +42,8 @@ class RawDocument(BaseModel):
     raw_text: str = ""
     page_count: int = Field(default=0, ge=0)
     ingested_at: datetime
+    # SHA-256 of the source file bytes; used to detect duplicate ingestion.
+    content_hash: str | None = None
 
     @model_validator(mode="after")
     def derive_text_from_pages(self) -> Self:
@@ -50,6 +52,14 @@ class RawDocument(BaseModel):
         self.raw_text = "\n".join(page.text for page in self.pages)
         self.page_count = len(self.pages)
         return self
+
+
+class DocumentMention(BaseModel):
+    """Another document referenced in a document's text, with the detected link type."""
+
+    document_number: str
+    document_type: DocumentType | None = None
+    relationship_type: RelationshipType = RelationshipType.REFERENCES
 
 
 class DocumentMetadata(BaseModel):
@@ -70,6 +80,7 @@ class DocumentMetadata(BaseModel):
     supersedes_documents: list[str] = Field(default_factory=list)
     amends_documents: list[str] = Field(default_factory=list)
     referenced_documents: list[str] = Field(default_factory=list)
+    mentions: list[DocumentMention] = Field(default_factory=list)
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 

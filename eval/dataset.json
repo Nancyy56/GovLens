@@ -1,0 +1,57 @@
+{
+  "description": "GovLens evaluation set. Ingest AnnualAuditReview_IAW.pdf and the PDFs from eval/make_sample_pdfs.py before running. 'answer_must_contain' items are case-insensitive and ignore thousands separators; a list inside it means any one of those strings.",
+  "documents": [
+    "AnnualAuditReview_IAW.pdf (repository root, scanned: OCR)",
+    "data/samples/notif_12_2023.pdf, notif_25_2024.pdf, circular_04_2024.pdf, order_07_2024.pdf (eval/make_sample_pdfs.py)"
+  ],
+  "expected_links": [
+    {"source": "25/2024", "relationship": "SUPERSEDES", "target": "12/2023"},
+    {"source": "4/2024", "relationship": "AMENDS", "target": "25/2024"},
+    {"source": "7/2024", "relationship": "REFERENCES", "target": "4/2024"}
+  ],
+  "expected_pending": [
+    {"source": "7/2024", "relationship": "SUPERSEDES", "numbers": ["1/2019", "2/2019", "3/2018"]}
+  ],
+  "questions": [
+    {"id": "audit-financial-year", "question": "What financial year does the annual review of the Internal Audit Wing cover?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [1, 7], "answer_must_contain": ["2024-25"]},
+    {"id": "audit-preface-focus", "question": "According to the preface, what does Internal Audit primarily focus on?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [5], "answer_must_contain": ["record"]},
+    {"id": "audit-follow-up", "question": "What does the review recommend about follow-up and monitoring of audit recommendations?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [12], "answer_must_contain": ["monitor"]},
+    {"id": "audit-common-deficiencies", "question": "What common deficiencies did the internal audit parties notice?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [8], "answer_must_contain": ["records"]},
+    {"id": "audit-universe", "question": "How many units were in the audit universe of the Internal Audit Wing in 2024-25?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [7, 9], "answer_must_contain": ["225"]},
+    {"id": "audit-targets", "question": "How many units were targeted for audit and how many were actually audited in 2024-25?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [7], "answer_must_contain": ["78", "71"]},
+    {"id": "audit-lok-adalats", "question": "How many Lok Adalats did the Internal Audit Wing conduct to settle outstanding audit paras?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [10], "answer_must_contain": [["04", "4 ", "four"]]},
+    {"id": "audit-outstanding-paras", "question": "How many audit paras were outstanding at the end of FY 2024-25 in total?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [10], "answer_must_contain": ["1559"]},
+    {"id": "audit-constraints", "question": "What constraints did the Internal Audit Wing report?",
+     "expected_source": "AnnualAuditReview_IAW.pdf", "expected_pages": [11], "answer_must_contain": [["training", "skill"]]},
+    {"id": "gst-current-rate", "question": "What is the GST rate on packaged food items?",
+     "expected_source": "25/2024", "expected_pages": [1], "answer_must_contain": ["12"]},
+    {"id": "old-penalty-superseded", "question": "What was the penalty for late filing under Notification No. 12/2023?",
+     "expected_source": "12/2023", "expected_pages": [1], "answer_must_contain": ["100"], "expect_supersession_warning": true},
+    {"id": "new-effective-date", "question": "When does Notification No. 25/2024 come into force?",
+     "expected_source": "25/2024", "expected_pages": [1], "answer_must_contain": ["1 April 2024"]},
+    {"id": "old-issue-date", "question": "When was Notification No. 12/2023 issued?",
+     "expected_source": "12/2023", "expected_pages": [1], "answer_must_contain": ["1 April 2023"]},
+    {"id": "issuer", "question": "Which ministry issued Notification No. 25/2024?",
+     "expected_source": "25/2024", "expected_pages": [1], "answer_must_contain": ["Ministry of Finance"]},
+    {"id": "circular-due-date", "question": "What is the due date for filing monthly returns according to Circular No. 4/2024?",
+     "expected_source": "4/2024", "expected_pages": [1], "answer_must_contain": ["25th"]},
+    {"id": "circular-amends", "question": "Which notification does Circular No. 4/2024 amend?",
+     "expected_source": "4/2024", "expected_pages": [1], "answer_must_contain": ["25/2024"]},
+    {"id": "order-withdrawn", "question": "Which circulars were withdrawn by Order No. 7/2024?",
+     "expected_source": "7/2024", "expected_pages": [1], "answer_must_contain": ["1/2019", "2/2019"]},
+    {"id": "late-interest", "question": "What interest is charged on late filing of returns?",
+     "expected_source": ["25/2024", "4/2024"], "expected_pages": [1], "answer_must_contain": ["18"]},
+    {"id": "abstain-income-tax", "question": "What is the income tax exemption limit for senior citizens?", "should_abstain": true},
+    {"id": "abstain-unrelated", "question": "Who won the 2022 football world cup?", "should_abstain": true},
+    {"id": "abstain-customs", "question": "What is the customs duty on imported cars?", "should_abstain": true},
+    {"id": "abstain-traffic", "question": "What is the punishment for drunk driving?", "should_abstain": true}
+  ]
+}

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Sequence
-
 from app.retrieval.interfaces import DocumentRetriever
 from app.retrieval.schemas import RetrievalResult, RetrievedChunk
 from app.vectorstore.interfaces import EmbeddingProvider, VectorStore
@@ -44,7 +42,15 @@ class QdrantDocumentRetriever(DocumentRetriever):
             filters=filters,
         )
 
-        chunks = [self._hit_to_chunk(hit) for hit in hits]
+        # A long chunk is stored as several windows; keep each chunk once, at its best score.
+        chunks: list[RetrievedChunk] = []
+        seen: set[tuple[str, int, int]] = set()
+        for hit in sorted(hits, key=lambda h: h.get("score", 0.0), reverse=True):
+            chunk = self._hit_to_chunk(hit)
+            key = (str(chunk.document_id), chunk.page_number, chunk.chunk_index)
+            if key not in seen:
+                seen.add(key)
+                chunks.append(chunk)
 
         if document_numbers:
             chunks = [c for c in chunks if c.document_number in document_numbers]

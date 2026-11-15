@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GovLens</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%2323539c%27/%3E%3Ccircle cx=%2714%27 cy=%2714%27 r=%276%27 fill=%27none%27 stroke=%27white%27 stroke-width=%273%27/%3E%3Cpath d=%27M18 18l7 7%27 stroke=%27white%27 stroke-width=%273%27 stroke-linecap=%27round%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="login-view" class="login-wrap" hidden>
+  <form id="login-form" class="card login-card">
+    <h1>GovLens</h1>
+    <p class="muted">Ask government documents questions, with answers you can check.</p>
+    <label>Username <input id="login-username" autocomplete="username" required></label>
+    <label>Password <input id="login-password" type="password" autocomplete="current-password" required></label>
+    <button type="submit" class="primary">Sign in</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</div>
+
+<div id="app-view" hidden>
+  <header class="topbar">
+    <span class="brand">GovLens</span>
+    <nav id="nav">
+      <button data-tab="ask" class="active">Ask</button>
+      <button data-tab="documents">Documents</button>
+      <button data-tab="compare">Compare</button>
+      <button data-tab="upload" data-role="EDITOR">Upload</button>
+      <button data-tab="users" data-role="ADMIN">Users</button>
+    </nav>
+    <span class="who"><span id="who"></span>
+      <button id="password-button" class="link">Change password</button>
+      <button id="logout-button" class="link">Sign out</button></span>
+  </header>
+
+  <main>
+    <section id="tab-ask" class="tab">
+      <form id="ask-form" class="card">
+        <label for="question">Question</label>
+        <textarea id="question" rows="2" placeholder="e.g. What is the GST rate on packaged food items?" required></textarea>
+        <div class="row">
+          <label>Only these document numbers <input id="filter-numbers" placeholder="optional, e.g. 25/2024, 12/2023"></label>
+          <label>Sources to read <select id="top-k"><option>3</option><option selected>5</option><option>8</option><option>10</option></select></label>
+          <button type="submit" class="primary" id="ask-button">Ask</button>
+        </div>
+      </form>
+      <div id="answer-area" hidden>
+        <div class="grid">
+          <div class="card">
+            <div id="answer-status" class="muted"></div>
+            <div id="supersession-banner" class="banner warn" hidden></div>
+            <div id="answer" class="answer"></div>
+            <div id="verification" hidden></div>
+          </div>
+          <aside class="card" id="source-panel">
+            <h3>Sources</h3>
+            <p class="muted" id="source-hint">Click a source tag like <span class="tag">S1</span> to read the passage.</p>
+            <ul id="source-list" class="plain"></ul>
+            <div id="source-text" class="source-text" hidden></div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-documents" class="tab" hidden>
+      <div class="card">
+        <div class="row">
+          <input id="doc-search" placeholder="Search number, title, subject, department">
+          <select id="doc-status"><option value="">Any status</option><option>ACTIVE</option><option>SUPERSEDED</option></select>
+          <button id="doc-refresh">Search</button>
+        </div>
+        <div class="table-wrap"><table id="doc-table"><thead><tr>
+          <th>Number</th><th>Type</th><th>Title</th><th>Issued</th><th>Status</th><th>Chunks</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div id="doc-detail" class="card" hidden></div>
+    </section>
+
+    <section id="tab-compare" class="tab" hidden>
+      <form id="compare-form" class="card">
+        <div class="row">
+          <label>Older (base) <select id="compare-base" required></select></label>
+          <label>Newer (target) <select id="compare-target" required></select></label>
+          <label>Focus <input id="compare-focus" placeholder="optional, e.g. rates and penalties"></label>
+          <label class="check"><input type="checkbox" id="compare-summary" checked> AI summary</label>
+          <button type="submit" class="primary" id="compare-button">Compare</button>
+        </div>
+      </form>
+      <div id="compare-result" hidden>
+        <div class="card"><div id="compare-heading"></div><div id="compare-summary-text" class="answer"></div></div>
+        <div class="card"><h3>Detected changes</h3><div class="table-wrap"><table id="change-table"><thead><tr>
+          <th>Change</th><th>Base</th><th>Target</th></tr></thead><tbody></tbody></table></div></div>
+      </div>
+    </section>
+
+    <section id="tab-upload" class="tab" hidden>
+      <form id="upload-form" class="card">
+        <label>PDF file <input type="file" id="upload-file" accept="application/pdf,.pdf" required></label>
+        <label class="check"><input type="checkbox" id="upload-background" checked> Process in the background (recommended for scans and large files)</label>
+        <button type="submit" class="primary" id="upload-button">Upload</button>
+        <p id="upload-message" role="status"></p>
+      </form>
+      <div class="card"><h3>Recent ingestion jobs</h3><div class="table-wrap"><table id="job-table"><thead><tr>
+        <th>File</th><th>Status</th><th>Attempts</th><th>Submitted</th><th>Result</th></tr></thead><tbody></tbody></table></div></div>
+    </section>
+
+    <section id="tab-users" class="tab" hidden>
+      <form id="user-form" class="card">
+        <h3>Add user</h3>
+        <div class="row">
+          <input id="new-username" placeholder="username" required>
+          <input id="new-password" type="password" placeholder="password (8+ characters)" required>
+          <select id="new-role"><option>VIEWER</option><option>EDITOR</option><option>ADMIN</option></select>
+          <button type="submit" class="primary">Add</button>
+        </div>
+        <p id="user-message" role="status"></p>
+      </form>
+      <div class="card"><div class="table-wrap"><table id="user-table"><thead><tr>
+        <th>Username</th><th>Role</th><th>Active</th><th>Last sign-in</th><th></th></tr></thead><tbody></tbody></table></div></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="dialog">
+  <form method="dialog" id="dialog-form">
+    <h3 id="dialog-title"></h3>
+    <div id="dialog-body"></div>
+    <div class="row end">
+      <button value="cancel" id="dialog-cancel">Cancel</button>
+      <button value="ok" class="primary" id="dialog-ok">OK</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast" role="status" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

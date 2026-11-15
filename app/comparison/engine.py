@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+import uuid
 from collections import defaultdict
 from typing import Sequence
 
 from app.schemas.processing import PageContent
 from app.comparison.schemas import ComparisonInput, SourceContext
-from app.models.enums import DocumentType
 from app.retrieval.schemas import RetrievedChunk
 
 
 class ComparisonEngine:
     """Group retrieved chunks by source document for downstream comparison.
 
-    The engine never compares text. It only organizes chunks into the
-    per-document bundles (`SourceContext`) that a future LLM or rule-based
-    comparator will consume.
+    The engine never compares text. It only organizes chunks into
+    per-document bundles (`SourceContext`) for the prompt. Documents keep the
+    order of their best-ranked chunk, so the most relevant source comes first.
+    Explicit document-to-document diffs live in ``app.comparison.differ``.
     """
 
     def prepare(
@@ -48,7 +49,7 @@ class ComparisonEngine:
                     for page_number, texts in sorted(entry["pages"].items())
                 ],
             )
-            for document_id, entry in sorted(grouped.items())
+            for document_id, entry in grouped.items()
         ]
 
         return ComparisonInput(query=query, sources=sources)

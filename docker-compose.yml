@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database Service
   postgres:
@@ -62,13 +60,28 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant-key}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b-instruct}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-0}
+      AUTH_ENABLED: ${AUTH_ENABLED:-True}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      API_KEYS: ${API_KEYS:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      HYBRID_SEARCH_ENABLED: ${HYBRID_SEARCH_ENABLED:-True}
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-True}
       ENV: ${ENV:-development}
-      DEBUG: ${DEBUG:-True}
+      DEBUG: ${DEBUG:-False}
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - qdrant
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      ollama:
+        condition: service_started
     volumes:
       # Mount source code for development with hot-reload
       - .:/app

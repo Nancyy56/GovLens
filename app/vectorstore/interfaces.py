@@ -25,3 +25,11 @@ class VectorStore(Protocol):
     def search(self, query_vector: Sequence[float], limit: int = 10, filters: dict | None = None) -> list[dict]:
         """Query the vector store and return scored hits with payloads."""
         ...
+
+    def delete_document(self, document_id) -> None:
+        """Remove all vectors belonging to a document."""
+        ...
+
+    def list_document_ids(self) -> set[str]:
+        """Return the distinct document ids that have stored vectors."""
+        ...

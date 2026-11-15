@@ -74,6 +74,9 @@ class DocumentRepository(_CrudRepository[Document, DocumentCreate]):
 
     model = Document
 
+    def get_by_file_hash(self, file_hash: str) -> Document | None:
+        return self.session.scalars(select(Document).where(Document.file_hash == file_hash)).first()
+
 
 class DocumentChunkRepository(_CrudRepository[DocumentChunk, DocumentChunkCreate]):
     """CRUD access for persisted chunk text rows."""

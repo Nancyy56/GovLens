@@ -9,7 +9,14 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
-from app.models.enums import DocumentStatus, DocumentType, RelationshipType
+from app.models.enums import (
+    DocumentStatus,
+    DocumentType,
+    IngestionJobStatus,
+    RelationshipOrigin,
+    RelationshipType,
+    UserRole,
+)
 
 class Document(Base):
     """Canonical metadata row for an ingested government document."""
@@ -17,6 +24,8 @@ class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
         UniqueConstraint("file_hash", name="uq_documents_file_hash"),
+        # file_hash is the SHA-256 of the source file bytes, so the unique
+        # constraint rejects re-ingesting an identical PDF.
         Index("ix_documents_document_number", "document_number"),
         Index("ix_documents_document_type", "document_type"),
         Index("ix_documents_issue_date", "issue_date"),
@@ -31,7 +40,7 @@ class Document(Base):
         default=DocumentType.UNKNOWN,
         comment="Stored as text so enum additions do not require PostgreSQL enum DDL.",
     )
-    issue_date: Mapped[date] = mapped_column(Date, nullable=False)
+    issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     department: Mapped[str | None] = mapped_column(String(256), nullable=True)
     subject: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -106,6 +115,12 @@ class DocumentRelationship(Base):
         SQLEnum(RelationshipType, native_enum=False, length=32, validate_strings=True),
         nullable=False,
     )
+    origin: Mapped[RelationshipOrigin] = mapped_column(
+        SQLEnum(RelationshipOrigin, native_enum=False, length=16, validate_strings=True),
+        nullable=False,
+        default=RelationshipOrigin.AUTO,
+        server_default=RelationshipOrigin.AUTO.value,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     source_document: Mapped[Document] = relationship(
@@ -147,3 +162,128 @@ class DocumentChunk(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+
+
+class DocumentReference(Base):
+    """A document number mentioned inside a document's text.
+
+    References are recorded at ingestion time even when the referenced
+    document has not been ingested yet. When it arrives later, the pending
+    reference is resolved into a ``DocumentRelationship`` edge.
+    """
+
+    __tablename__ = "document_references"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_document_id",
+            "referenced_number",
+            "relationship_type",
+            name="uq_document_references_mention",
+        ),
+        Index("ix_document_references_referenced_number", "referenced_number"),
+        Index("ix_document_references_source_document_id", "source_document_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Normalized (casefolded, whitespace-free) number used for matching.
+    referenced_number: Mapped[str] = mapped_column(String(128), nullable=False)
+    referenced_number_raw: Mapped[str] = mapped_column(String(128), nullable=False)
+    referenced_type: Mapped[DocumentType | None] = mapped_column(
+        SQLEnum(DocumentType, native_enum=False, length=32, validate_strings=True),
+        nullable=True,
+    )
+    relationship_type: Mapped[RelationshipType] = mapped_column(
+        SQLEnum(RelationshipType, native_enum=False, length=32, validate_strings=True),
+        nullable=False,
+    )
+    resolved_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class IngestionJob(Base):
+    """Background ingestion request and its outcome."""
+
+    __tablename__ = "ingestion_jobs"
+    __table_args__ = (Index("ix_ingestion_jobs_status", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    status: Mapped[IngestionJobStatus] = mapped_column(
+        SQLEnum(IngestionJobStatus, native_enum=False, length=32, validate_strings=True),
+        nullable=False,
+        default=IngestionJobStatus.PENDING,
+    )
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class User(Base):
+    """A person who can sign in. Passwords are stored as scrypt hashes."""
+
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("username", name="uq_users_username"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    role: Mapped[UserRole] = mapped_column(
+        SQLEnum(UserRole, native_enum=False, length=16, validate_strings=True),
+        nullable=False,
+        default=UserRole.VIEWER,
+    )
+    is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AuthToken(Base):
+    """A sign-in session. Only the SHA-256 of the token is stored."""
+
+    __tablename__ = "auth_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_auth_tokens_token_hash"),
+        Index("ix_auth_tokens_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RateLimitWindow(Base):
+    """Request count per client per one-minute window, shared by all API workers."""
+
+    __tablename__ = "rate_limit_windows"
+
+    identity: Mapped[str] = mapped_column(String(128), primary_key=True)
+    window_start: Mapped[int] = mapped_column(Integer, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
