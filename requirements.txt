@@ -7,7 +7,7 @@ sqlalchemy>=2.0.35
 alembic==1.13.1
 psycopg2-binary==2.9.9
 qdrant-client==1.18.0
-python-dotenv==1.0.0
+python-dotenv==1.2.4
 httpx==0.25.2
 python-multipart==0.0.6
 pytest==7.4.3
