@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from sqlalchemy import CheckConstraint, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, CheckConstraint, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -257,6 +257,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Brute-force protection: consecutive wrong passwords, and when a lock (if any) ends.
+    failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuthToken(Base):
@@ -287,3 +290,65 @@ class RateLimitWindow(Base):
     identity: Mapped[str] = mapped_column(String(128), primary_key=True)
     window_start: Mapped[int] = mapped_column(Integer, primary_key=True)
     count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class QueryLog(Base):
+    """One question and the answer it received: powers history, feedback, and analytics."""
+
+    __tablename__ = "query_logs"
+    __table_args__ = (
+        Index("ix_query_logs_username_created", "username", "created_at"),
+        Index("ix_query_logs_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Kept even if the user is deleted, and used to scope history for service API keys.
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_markdown: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The full QueryResult, so a past answer can be reopened exactly as it was shown.
+    result: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    supported_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unsupported_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 1 = helpful, -1 = not helpful, NULL = no rating.
+    feedback: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    feedback_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class Bookmark(Base):
+    """A document a user saved, with an optional private note."""
+
+    __tablename__ = "bookmarks"
+    __table_args__ = (UniqueConstraint("username", "document_id", name="uq_bookmarks_username_document"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AuditLog(Base):
+    """Who did what, and when. Append-only; shown to administrators."""
+
+    __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_created_at", "created_at"), Index("ix_audit_logs_action", "action"))
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(48), nullable=False)
+    target: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)

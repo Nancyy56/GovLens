@@ -135,6 +135,21 @@ class OllamaClient(LLMClient):
         if self.model not in names:
             raise RuntimeError(f"Model {self.model} is not available in Ollama; run `ollama pull {self.model}`")
 
+    def warm_up(self) -> bool:
+        """Load the model into memory ahead of the first question.
+
+        Loading can take minutes on a laptop GPU. It only helps when the model is kept
+        loaded afterwards, so this does nothing when keep-alive is 0.
+        """
+
+        if self.keep_alive in (None, 0, "0"):
+            return False
+        payload = json.dumps({"model": self.model, "keep_alive": self.keep_alive}).encode()
+        request = Request(f"{self.base_url}/api/generate", data=payload, headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=max(self.timeout_seconds, 600)) as response:
+            response.read()
+        return True
+
     def _request(self, prompt: str, stream: bool, extra: dict | None = None, num_predict: int | None = None) -> Request:
         payload = json.dumps(
             {

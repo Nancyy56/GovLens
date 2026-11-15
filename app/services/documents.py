@@ -182,6 +182,21 @@ class DocumentService:
             pages.setdefault(chunk.page_number, []).append(chunk.chunk_text)
         return [PageContent(page_number=page, text="\n".join(texts)) for page, texts in pages.items()]
 
+    def source_file(self, document_id: uuid.UUID, allowed_dirs: list[str]) -> str | None:
+        """Path of the original PDF, only if it still exists inside one of ``allowed_dirs``."""
+
+        source = self._require(document_id).source_url
+        if not source:
+            return None
+        resolved = Path(source).resolve()
+        if not resolved.is_file():
+            return None
+        for allowed in allowed_dirs:
+            root = Path(allowed).resolve()
+            if root in resolved.parents:
+                return str(resolved)
+        return None
+
     def page_text(self, document_id: uuid.UUID, page_number: int) -> PageContent:
         self._require(document_id)
         pages = {page.page_number: page for page in self.load_pages(document_id)}

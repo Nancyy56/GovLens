@@ -10,8 +10,12 @@ from fastapi import APIRouter, Depends
 
 from app.api.health import router as health_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.analytics import router as analytics_router
+from app.api.routes.audit import router as audit_router
+from app.api.routes.bookmarks import router as bookmarks_router
 from app.api.routes.compare import router as compare_router
 from app.api.routes.documents import router as documents_router
+from app.api.routes.history import router as history_router
 from app.api.routes.ingestion import router as ingestion_router
 from app.api.routes.query import router as query_router
 from app.api.routes.users import router as users_router
@@ -29,4 +33,8 @@ api_router.include_router(ingestion_router, dependencies=viewer)
 api_router.include_router(query_router, dependencies=viewer)
 api_router.include_router(compare_router, dependencies=viewer)
 api_router.include_router(documents_router, dependencies=viewer)
+api_router.include_router(history_router, dependencies=viewer)
+api_router.include_router(analytics_router)
+api_router.include_router(audit_router)
+api_router.include_router(bookmarks_router, dependencies=viewer)
 api_router.include_router(users_router)

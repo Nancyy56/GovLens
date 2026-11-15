@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     # Comma-separated directories that path-based ingestion may read from.
     ingest_allowed_dirs: str = "/app,data/uploads"
     ingest_workers: int = 1
+    # Domains that "import from URL" may download PDFs from (a host matches itself and its
+    # subdomains). Use "*" to allow any public host. Private and internal addresses are always refused.
+    import_allowed_domains: str = (
+        "gov.in,nic.in,rbi.org.in,sansad.in,gov.uk,europa.eu,federalregister.gov,"
+        "govinfo.gov,regulations.gov,congress.gov,un.org,pfrda.org.in,cert-in.org.in,allahabadhighcourt.in"
+    )
+    import_timeout_seconds: int = 30
 
     # Security configuration
     # When False, every request is treated as an admin (local experiments only).
@@ -97,6 +104,12 @@ class Settings(BaseSettings):
     # Optional service keys for scripts: "key" (admin) or "key:VIEWER", comma-separated.
     api_keys: str = ""
     rate_limit_per_minute: int = 60
+    # Lock an account for a while after this many wrong passwords in a row (0 disables).
+    login_max_failures: int = 5
+    login_lockout_minutes: int = 15
+    # Delete stored questions and audit entries older than this many days (0 keeps everything).
+    query_log_retention_days: int = 90
+    audit_log_retention_days: int = 365
     # Failed and successful sign-in attempts per client IP.
     login_rate_limit_per_minute: int = 10
     # "database" shares counts across API workers; "memory" is per process.
@@ -119,6 +132,35 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @property
+    def is_production(self) -> bool:
+        return self.env.strip().lower() in {"production", "prod"}
+
+    def production_problems(self) -> list[str]:
+        """Settings that must not be left at their development defaults in production."""
+
+        problems: list[str] = []
+        if not self.auth_enabled:
+            problems.append("AUTH_ENABLED must be true")
+        if self.debug:
+            problems.append("DEBUG must be false")
+        if self.postgres_password in {"", "changeme", "password"} or len(self.postgres_password) < 12:
+            problems.append("POSTGRES_PASSWORD must be a unique value of at least 12 characters")
+        if not self.qdrant_api_key or self.qdrant_api_key == "qdrant-key":
+            problems.append("QDRANT_API_KEY must be set to a unique value")
+        if "*" in _split_csv(self.cors_origins):
+            problems.append("CORS_ORIGINS must list explicit origins, not *")
+        if self.rate_limit_per_minute <= 0:
+            problems.append("RATE_LIMIT_PER_MINUTE must be greater than 0")
+        if self.admin_password:
+            from app.services.auth import AuthService, UserValidationError
+
+            try:
+                AuthService._check_password(self.admin_password, self.admin_username)
+            except UserValidationError as exc:
+                problems.append(f"ADMIN_PASSWORD is not acceptable: {exc}")
+        return problems
 
     @property
     def database_url(self) -> str:
@@ -158,6 +200,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return _split_csv(self.cors_origins)
+
+    @property
+    def import_allowed_domain_list(self) -> list[str]:
+        return [item.lower().lstrip(".") for item in _split_csv(self.import_allowed_domains)]
 
     @property
     def ingest_allowed_dir_list(self) -> list[str]:

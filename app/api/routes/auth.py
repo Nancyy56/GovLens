@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from app.api.security import Principal, bearer_scheme, check_rate_limit, client_ip, require_viewer
 from app.core.config import settings
 from app.db.database import get_session
-from app.services.auth import AuthError, AuthService, LoginResult, UserValidationError
+from app.services import audit
+from app.services.auth import AuthError, AuthLockedError, AuthService, LoginResult, UserValidationError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -35,9 +36,13 @@ def login(request: LoginRequest, http_request: Request, service: AuthService = D
 
     # Limit attempts per IP to slow down password guessing.
     check_rate_limit(f"login:{client_ip(http_request)}", settings.login_rate_limit_per_minute)
+    ip = client_ip(http_request)
     try:
-        return service.login(request.username, request.password)
+        result = service.login(request.username, request.password)
+        audit.record(request.username, "auth.login", ip=ip)
+        return result
     except AuthError as exc:
+        audit.record(request.username, "auth.locked" if isinstance(exc, AuthLockedError) else "auth.login_failed", ip=ip)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 
@@ -67,6 +72,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="Service API keys have no password")
     try:
         service.change_own_password(principal.user_id, request.current_password, request.new_password)
+        audit.record(principal.username, "auth.password_changed")
     except AuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     except UserValidationError as exc:

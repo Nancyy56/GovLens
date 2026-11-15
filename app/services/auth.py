@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.documents import AuthToken, User
 from app.models.enums import UserRole
 
@@ -28,7 +29,21 @@ logger = logging.getLogger(__name__)
 
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
 _USERNAME = re.compile(r"^[A-Za-z0-9_.-]{3,64}$")
-MIN_PASSWORD_LENGTH = 8
+MIN_PASSWORD_LENGTH = 10
+# Passwords that appear in every attacker's first guesses.
+_COMMON_PASSWORDS = frozenset(
+    {"password", "password1", "password123", "passw0rd", "1234567890", "123456789012", "qwertyuiop", "qwerty12345",
+     "letmein123", "welcome123", "admin12345", "administrator", "changeme123", "changemenow", "govlens123", "iloveyou123"}
+)
+
+
+def _is_locked(user: "User", now: datetime) -> bool:
+    until = user.locked_until
+    if until is None:
+        return False
+    if until.tzinfo is None:  # SQLite returns naive datetimes
+        until = until.replace(tzinfo=UTC)
+    return until > now
 
 
 class UserRead(BaseModel):
@@ -40,6 +55,7 @@ class UserRead(BaseModel):
     is_active: bool
     created_at: datetime
     last_login_at: datetime | None
+    locked_until: datetime | None = None
 
 
 class LoginResult(BaseModel):
@@ -51,6 +67,10 @@ class LoginResult(BaseModel):
 
 class AuthError(Exception):
     """Wrong credentials or an unusable account (deliberately vague)."""
+
+
+class AuthLockedError(AuthError):
+    """Too many wrong passwords. The message stays generic so it does not reveal that the account exists."""
 
 
 class UserValidationError(ValueError):
@@ -93,10 +113,16 @@ class AuthService:
         user = self.session.scalars(select(User).where(func.lower(User.username) == username.lower())).first()
         # Hash even for unknown users so response time does not reveal which usernames exist.
         valid = verify_password(password, user.password_hash if user else hash_password("unused-dummy"))
+        now = datetime.now(UTC)
+        if user is not None and _is_locked(user, now):
+            raise AuthLockedError("Invalid username or password")
         if user is None or not valid or not user.is_active:
+            if user is not None and not valid:
+                self._record_failure(user, now)
             raise AuthError("Invalid username or password")
 
-        now = datetime.now(UTC)
+        user.failed_attempts = 0
+        user.locked_until = None
         token = secrets.token_urlsafe(32)
         expires_at = now + self.token_ttl
         self.session.execute(delete(AuthToken).where(AuthToken.expires_at < now))
@@ -105,6 +131,20 @@ class AuthService:
         self.session.commit()
         logger.info("User %s signed in", user.username)
         return LoginResult(access_token=token, expires_at=expires_at, user=UserRead.model_validate(user))
+
+    def _record_failure(self, user: User, now: datetime) -> None:
+        limit = settings.login_max_failures
+        if limit <= 0:
+            return
+        user.failed_attempts = (user.failed_attempts or 0) + 1
+        locked = user.failed_attempts >= limit
+        if locked:
+            user.locked_until = now + timedelta(minutes=settings.login_lockout_minutes)
+            user.failed_attempts = 0
+            logger.warning("Locked account %s for %s minutes after repeated failed sign-ins", user.username, settings.login_lockout_minutes)
+        self.session.commit()
+        if locked:
+            raise AuthLockedError("Invalid username or password")
 
     def authenticate(self, token: str) -> User | None:
         """Return the active user owning a valid, unexpired token."""
@@ -136,7 +176,7 @@ class AuthService:
     def create_user(self, username: str, password: str, role: UserRole) -> UserRead:
         if not _USERNAME.match(username):
             raise UserValidationError("Username must be 3-64 characters: letters, digits, '.', '_' or '-'")
-        self._check_password(password)
+        self._check_password(password, username)
         if self.session.scalars(select(User).where(func.lower(User.username) == username.lower())).first():
             raise UserValidationError(f"Username {username!r} is already taken")
         user = User(username=username, password_hash=hash_password(password), role=role, is_active=True)
@@ -154,6 +194,7 @@ class AuthService:
         role: UserRole | None = None,
         is_active: bool | None = None,
         password: str | None = None,
+        unlock: bool = False,
     ) -> UserRead:
         user = self._require(user_id)
         demoting = (role is not None and role != UserRole.ADMIN) or is_active is False
@@ -165,8 +206,11 @@ class AuthService:
             user.role = role
         if is_active is not None:
             user.is_active = is_active
+        if unlock:
+            user.failed_attempts = 0
+            user.locked_until = None
         if password is not None:
-            self._check_password(password)
+            self._check_password(password, user.username)
             user.password_hash = hash_password(password)
         if password is not None or is_active is False:
             # Force re-login everywhere after a password change or deactivation.
@@ -188,7 +232,7 @@ class AuthService:
         user = self._require(user_id)
         if not verify_password(current, user.password_hash):
             raise AuthError("Current password is incorrect")
-        self._check_password(new)
+        self._check_password(new, user.username)
         user.password_hash = hash_password(new)
         self.session.execute(delete(AuthToken).where(AuthToken.user_id == user.id))
         self.session.commit()
@@ -224,6 +268,11 @@ class AuthService:
             raise UserValidationError("At least one active admin must remain")
 
     @staticmethod
-    def _check_password(password: str) -> None:
+    def _check_password(password: str, username: str | None = None) -> None:
         if len(password) < MIN_PASSWORD_LENGTH:
             raise UserValidationError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+        lowered = password.lower()
+        if lowered in _COMMON_PASSWORDS or len(set(password)) < 4:
+            raise UserValidationError("That password is too easy to guess. Choose something less common")
+        if username and len(username) >= 3 and username.lower() in lowered:
+            raise UserValidationError("Password must not contain the username")

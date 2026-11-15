@@ -161,8 +161,8 @@ def auth_client(monkeypatch, sqlite_session_factory):
 
     app.dependency_overrides[get_session] = session_override
     with sqlite_session_factory() as session:
-        AuthService(session).create_user("admin", "admin-pass-1", UserRole.ADMIN)
-        AuthService(session).create_user("viewer", "viewer-pass-1", UserRole.VIEWER)
+        AuthService(session).create_user("admin", "Tr0ub4dor-pass1", UserRole.ADMIN)
+        AuthService(session).create_user("viewer", "Zebra-pass-77x", UserRole.VIEWER)
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -174,7 +174,7 @@ def _login(client, username, password) -> dict:
 
 
 def test_login_me_and_logout_over_http(auth_client) -> None:
-    headers = _login(auth_client, "viewer", "viewer-pass-1")
+    headers = _login(auth_client, "viewer", "Zebra-pass-77x")
 
     assert auth_client.get("/api/v1/auth/me", headers=headers).json()["role"] == "VIEWER"
     assert auth_client.post("/api/v1/auth/logout", headers=headers).status_code == 204
@@ -182,15 +182,15 @@ def test_login_me_and_logout_over_http(auth_client) -> None:
 
 
 def test_roles_enforced_over_http(auth_client) -> None:
-    viewer = _login(auth_client, "viewer", "viewer-pass-1")
-    admin = _login(auth_client, "admin", "admin-pass-1")
+    viewer = _login(auth_client, "viewer", "Zebra-pass-77x")
+    admin = _login(auth_client, "admin", "Tr0ub4dor-pass1")
 
     assert auth_client.get("/api/v1/users", headers=viewer).status_code == 403
     assert auth_client.get("/api/v1/metrics", headers=viewer).status_code == 403
     assert auth_client.post("/api/v1/ingest", json={"file_path": "/app/x.pdf"}, headers=viewer).status_code == 403
 
     created = auth_client.post(
-        "/api/v1/users", json={"username": "editor1", "password": "editor-pass-1", "role": "EDITOR"}, headers=admin
+        "/api/v1/users", json={"username": "editor1", "password": "Quartz-pass-42y", "role": "EDITOR"}, headers=admin
     )
     assert created.status_code == 201
     assert [u["username"] for u in auth_client.get("/api/v1/users", headers=admin).json()] == ["admin", "editor1", "viewer"]
@@ -206,7 +206,7 @@ def test_login_attempts_are_rate_limited(auth_client, frozen_clock) -> None:
 
 
 def test_unexpected_errors_hide_details_but_return_request_id(auth_client, monkeypatch) -> None:
-    headers = _login(auth_client, "admin", "admin-pass-1")
+    headers = _login(auth_client, "admin", "Tr0ub4dor-pass1")
 
     class Exploding:
         def list(self, **kwargs):

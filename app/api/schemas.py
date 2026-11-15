@@ -16,6 +16,10 @@ class IngestRequest(BaseModel):
     file_path: str = Field(..., description="Path to a PDF inside an allowed ingestion directory (INGEST_ALLOWED_DIRS).")
 
 
+class ImportUrlRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2000, description="Link to a PDF on an approved government website.")
+
+
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Natural-language question to answer from the document corpus.")
     top_k: int = Field(default=10, ge=1, le=100, description="Maximum number of chunks to retrieve.")
@@ -52,6 +56,7 @@ class IngestionJobRead(BaseModel):
 
 __all__ = [
     "CompareRequest",
+    "ImportUrlRequest",
     "IngestRequest",
     "IngestionJobRead",
     "IngestionResult",

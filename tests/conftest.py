@@ -77,3 +77,13 @@ def make_document(sqlite_session: Session):
         return document
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def _no_history_writes(request, monkeypatch):
+    """API tests stub the database session; don't let query routes open a real connection to log history."""
+
+    if "history_service" in request.fixturenames:
+        return
+    monkeypatch.setattr("app.services.history.record_query", lambda **_: None)
+    monkeypatch.setattr("app.services.audit.record", lambda *a, **k: None)

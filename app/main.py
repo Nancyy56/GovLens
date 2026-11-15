@@ -12,7 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -37,20 +37,26 @@ configure_logging(settings.log_level, settings.log_format)
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 INITIAL_PASSWORD_FILE = Path("data/initial_admin_password.txt")
 
 
 def _bootstrap_admin() -> None:
     from app.db.database import SessionLocal
-    from app.services.auth import AuthService
+    from app.services.auth import AuthService, UserValidationError
 
     if not settings.auth_enabled:
         logger.warning("AUTH_ENABLED is false: every request is treated as an admin.")
         return
-    with SessionLocal() as session:
-        generated = AuthService(session).ensure_initial_admin(
-            settings.admin_username, settings.admin_password, INITIAL_PASSWORD_FILE
-        )
+    try:
+        with SessionLocal() as session:
+            generated = AuthService(session).ensure_initial_admin(
+                settings.admin_username, settings.admin_password, INITIAL_PASSWORD_FILE
+            )
+    except UserValidationError as exc:
+        # Without this the app would start with no way to sign in and only a vague log line.
+        logger.error("Cannot create the first admin account: %s. Fix ADMIN_USERNAME / ADMIN_PASSWORD and restart.", exc)
+        raise
     if generated:
         logger.warning(
             "Created admin user %r with a generated password, saved to %s. Sign in and change it.",
@@ -78,11 +84,47 @@ def _startup_repair() -> None:
         logger.exception("Startup reconciliation failed; run POST /api/v1/documents/reconcile later")
 
 
+_stop_background = threading.Event()
+RETENTION_INTERVAL_SECONDS = 24 * 3600
+
+
+def _retention_loop() -> None:
+    """Purge old history and audit rows shortly after start, then daily."""
+
+    from app.services.retention import run_retention
+
+    if _stop_background.wait(60):
+        return
+    while True:
+        run_retention()
+        if _stop_background.wait(RETENTION_INTERVAL_SECONDS):
+            return
+
+
+def _warm_up_llm() -> None:
+    """Load the language model in the background so the first question is not slow."""
+
+    from app.services.dependencies import get_llm_client
+
+    try:
+        client = get_llm_client()
+        warm = getattr(client, "warm_up", None)
+        if warm and warm():
+            logger.info("Language model loaded and ready")
+    except Exception as exc:
+        logger.warning("Could not pre-load the language model: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.dependencies import get_job_runner
 
     logger.info("Starting %s in %s mode", PROJECT_NAME, settings.env)
+    if settings.is_production:
+        problems = settings.production_problems()
+        if problems:
+            # Refuse to serve real traffic with development defaults.
+            raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     runner = get_job_runner()
     try:
@@ -92,9 +134,41 @@ async def lifespan(app: FastAPI):
         logger.exception("Startup database tasks failed")
     runner.start()
     threading.Thread(target=_startup_repair, name="startup-repair", daemon=True).start()
+    threading.Thread(target=_warm_up_llm, name="llm-warm-up", daemon=True).start()
+    _stop_background.clear()
+    threading.Thread(target=_retention_loop, name="retention", daemon=True).start()
     yield
+    _stop_background.set()
     runner.stop()
     logger.info("Shutting down %s", PROJECT_NAME)
+
+
+# Applied to the React app only. Swagger (/docs) and the legacy page load their own scripts.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; object-src 'self' blob:; "
+    "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+)
+_NO_CSP_PREFIXES = ("/docs", "/redoc", "/legacy", "/static", f"{API_V1_STR}/openapi")
+
+
+def security_headers(path: str) -> dict[str, str]:
+    """Browser hardening headers for a response to ``path``."""
+
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+        "Cross-Origin-Opener-Policy": "same-origin",
+    }
+    if path.startswith(API_V1_STR):
+        headers["Cache-Control"] = "no-store"  # sign-in tokens and personal answers must not be cached
+    elif not path.startswith(_NO_CSP_PREFIXES):
+        headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
+    if settings.is_production:
+        headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return headers
 
 
 def create_app() -> FastAPI:
@@ -144,6 +218,8 @@ def create_app() -> FastAPI:
             response = await call_next(request)
             status_code = response.status_code
             response.headers["X-Request-ID"] = request_id_var.get()
+            for name, value in security_headers(request.url.path).items():
+                response.headers.setdefault(name, value)
             return response
         finally:
             route = request.scope.get("route")
@@ -171,13 +247,42 @@ def create_app() -> FastAPI:
         )
 
     if STATIC_DIR.is_dir():
+        # The original single-page UI stays available at /legacy as a fallback.
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+        @app.get("/legacy", include_in_schema=False)
+        def legacy_ui() -> FileResponse:
+            return FileResponse(STATIC_DIR / "index.html")
+
+    if (FRONTEND_DIST / "index.html").is_file():
+        _mount_frontend(app)
+    elif STATIC_DIR.is_dir():
 
         @app.get("/", include_in_schema=False)
         def web_ui() -> FileResponse:
             return FileResponse(STATIC_DIR / "index.html")
 
     return app
+
+
+def _mount_frontend(app: FastAPI) -> None:
+    """Serve the built React app, falling back to index.html so client-side routes work."""
+
+    index = FRONTEND_DIST / "index.html"
+    dist_root = FRONTEND_DIST.resolve()
+    if (FRONTEND_DIST / "assets").is_dir():
+        # Hashed filenames, so browsers may cache them for a year.
+        app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str) -> FileResponse:
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = (FRONTEND_DIST / path).resolve()
+        # Serve real files (favicon, robots.txt...) but never anything outside the build folder.
+        if path and candidate.is_file() and dist_root in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 def _register_exception_handlers(app: FastAPI) -> None:

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_ingestion_service, get_job_runner
-from app.api.schemas import IngestRequest, IngestionJobRead
+from app.api.schemas import ImportUrlRequest, IngestRequest, IngestionJobRead
 from app.api.security import Principal, require_editor
 from app.core.config import settings
 from app.db.database import get_session
@@ -19,6 +19,7 @@ from app.models.enums import IngestionJobStatus
 from app.services.ingestion import DocumentIngestionService
 from app.services.jobs import IngestionJobRunner, discard_upload
 from app.services.paths import ensure_path_allowed
+from app.services import audit, url_import
 from app.services.schemas import IngestionResult
 
 router = APIRouter(prefix="/ingest", tags=["ingestion"])
@@ -58,15 +59,43 @@ def upload_document(
     saved_path = _save_upload(file)
     if background:
         job = runner.submit(session, saved_path, original_filename=file.filename, submitted_by=principal.user_id)
+        audit.record(principal.username, "document.upload", target=file.filename, detail="queued")
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
             content=IngestionJobRead.model_validate(job).model_dump(mode="json"),
         )
     try:
-        return service.ingest(saved_path, original_filename=file.filename)
+        result = service.ingest(saved_path, original_filename=file.filename)
     except Exception:
         discard_upload(saved_path, settings.upload_dir)
         raise
+    audit.record(principal.username, "document.upload", target=file.filename)
+    return result
+
+
+@router.post("/url", response_model=IngestionJobRead, status_code=status.HTTP_202_ACCEPTED)
+def import_from_url(
+    request: ImportUrlRequest,
+    principal: Principal = Depends(require_editor),
+    runner: IngestionJobRunner = Depends(get_job_runner),
+    session: Session = Depends(get_session),
+):
+    """Download a PDF from an approved government website and queue it for ingestion."""
+
+    try:
+        saved_path, filename = url_import.download_pdf(request.url)
+    except url_import.ImportError_ as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    job = runner.submit(session, saved_path, original_filename=filename, submitted_by=principal.user_id)
+    audit.record(principal.username, "document.import_url", target=filename, detail=request.url)
+    return job
+
+
+@router.get("/url/allowed-domains", response_model=list[str])
+def allowed_import_domains():
+    """Sites that "import from URL" accepts (an empty list never happens; ``*`` means any public site)."""
+
+    return settings.import_allowed_domain_list
 
 
 @router.post("/jobs", response_model=IngestionJobRead, status_code=status.HTTP_202_ACCEPTED)

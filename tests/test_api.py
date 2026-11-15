@@ -315,3 +315,15 @@ def test_ollama_does_not_retry_client_errors(monkeypatch) -> None:
     with pytest.raises(ollama_client.LLMUnavailableError, match="404"):
         ollama_client.OllamaClient().generate("p")
     assert len(calls) == 1
+
+
+def test_production_config_rejects_development_defaults():
+    from app.core.config import Settings
+
+    unsafe = Settings(env="production", postgres_password="changeme", qdrant_api_key="qdrant-key", debug=True, auth_enabled=False)
+    problems = unsafe.production_problems()
+    assert unsafe.is_production
+    assert len(problems) == 4
+
+    safe = Settings(env="production", postgres_password="a-long-unique-password", qdrant_api_key="unique-qdrant-key", debug=False, auth_enabled=True)
+    assert safe.production_problems() == []

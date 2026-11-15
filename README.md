@@ -310,3 +310,49 @@ scripts/restore.sh backups/<timestamp>               # replaces database and upl
 ## Known Limitations
 
 See [docs/known_limitations.md](docs/known_limitations.md). In short: answers are only as good as a small local model on CPU; extraction and relationship detection are pattern-based (with a verified LLM fallback for metadata); verification flags unsupported statements but cannot prove correctness; there is no HTTPS or multi-machine deployment, since GovLens targets a local machine.
+
+## Web interface (React)
+
+The UI lives in `frontend/` (Vite, React, TypeScript, Tailwind, TanStack Query). FastAPI serves the built app from `frontend/dist`; the original page stays available at `/legacy`.
+
+| Page | What it does |
+|---|---|
+| Overview | Library stats, system health (database, Qdrant, Ollama), recent ingestion |
+| Ask | Streaming answers, clickable `[S1]` citations that open the exact source page, per-sentence verification, supersession warnings, scope to chosen documents |
+| Search | Instant hybrid passage search (no AI) with match highlighting and relevance bars; jump to "Ask AI" from any result |
+| History and feedback | Every answer is saved per user; reopen, search or delete past questions; rate answers 👍/👎; copy or export an answer as Markdown |
+| Analytics (admin) | Questions per day, answered and verified rates, satisfaction, response time, most cited documents, and a "worth a look" list of weak answers |
+| Quick search (Ctrl/⌘ K) | Command palette: jump to any page, find documents, or start a question from anywhere |
+| Find documents | A directory of ~120 official sources: **112 for India** (Gazette and law, tax and finance, regulators, 40+ ministries, courts, commissions, and 17 state governments) plus US, UK and EU. Filter by region and category; includes a step-by-step guide and ready-made search queries for locating PDFs |
+| Import from link | Paste a PDF link from an approved government site; GovLens downloads and indexes it. Only allow-listed domains (`IMPORT_ALLOWED_DOMAINS`) are accepted, private/internal addresses are always refused, every redirect is re-checked, and size and PDF type are enforced |
+| Plain-language brief | One click on any document: who is affected, what must be done, deadlines, penalties, written only from the document text and cached |
+| Saved | Bookmark documents and keep private notes on why they matter |
+| Original PDF viewer | View the uploaded PDF next to the extracted text on each document page (served only from the upload folders) |
+| Audit log (admin) | Who signed in, uploaded, imported, deleted or changed users, with searchable history |
+| Timeline | Documents by issue date with status and effective date; filter to what is still in force |
+| Documents | Lineage graph, search and filter, drag-and-drop PDF upload with live job progress, lineage (supersedes / amends / references), page text viewer |
+| Compare | Deterministic sentence-level diff of two versions plus an AI summary limited to changes actually found |
+| Admin | Users and roles, ingestion jobs, index reconciliation, password change |
+
+```bash
+cd frontend && npm install
+npm run dev        # http://localhost:5173, proxies /api to localhost:8000
+npm run build      # outputs frontend/dist
+```
+
+## Production
+
+```bash
+cp .env.production.example .env.production   # fill in every value
+make prod-up                                 # Caddy (HTTPS) + Gunicorn workers + internal-only databases
+```
+
+- With `ENV=production` the app **refuses to start** if `AUTH_ENABLED` is off, `DEBUG` is on, or the Postgres / Qdrant secrets are still defaults.
+- The production stack publishes only ports 80/443; Postgres, Qdrant and Ollama are not reachable from outside. The app container runs with a read-only filesystem, no Linux capabilities, and migrations run once before workers start.
+- **Account protection:** five wrong passwords in a row lock the account for 15 minutes (`LOGIN_MAX_FAILURES`, `LOGIN_LOCKOUT_MINUTES`); the error message never reveals whether an account exists, and an admin can unlock from the Admin page. Passwords need 10+ characters and may not be common or contain the username.
+- **Browser hardening:** every response carries `nosniff`, `X-Frame-Options: DENY`, a strict Content-Security-Policy for the web app, `Cache-Control: no-store` on API responses, and HSTS in production.
+- **Privacy:** stored questions are deleted after `QUERY_LOG_RETENTION_DAYS` (default 90) and audit entries after `AUDIT_LOG_RETENTION_DAYS` (default 365).
+- **Backups:** the production stack runs a daily `pg_dump` into a `backups` volume (newest `BACKUP_KEEP` kept). The production image uses CPU PyTorch (about 2.5 GB instead of 9.9 GB); pass `--build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu124` for a GPU build.
+- Dependabot opens weekly update PRs for Python, npm, Docker and GitHub Actions.
+- `make backup` / `scripts/restore.sh` for data; CI (`.github/workflows/ci.yml`) runs backend tests, the frontend type-check and build, and a Docker build.
+- `make help` lists all shortcuts.

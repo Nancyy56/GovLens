@@ -9,6 +9,7 @@ from app.services.dependencies import (
     get_embedding_provider,
     get_ingestion_service,
     get_job_runner,
+    get_llm_client,
     get_query_service,
     get_vector_store,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "get_embedding_provider",
     "get_ingestion_service",
     "get_job_runner",
+    "get_llm_client",
     "get_query_service",
     "get_vector_store",
 ]

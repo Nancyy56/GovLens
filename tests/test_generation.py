@@ -258,3 +258,15 @@ def test_prompt_restates_question_after_sources() -> None:
     comparison, citations = _two_page_input()
     prompt = PromptBuilder().build("What is the rate?", comparison, citations)
     assert prompt.rindex("Answer this question: What is the rate?") > prompt.index("### [S2] Page 2")
+
+
+def test_warm_up_is_skipped_when_the_model_is_not_kept_loaded(monkeypatch):
+    from app.generation import ollama_client
+    from app.generation.ollama_client import OllamaClient
+
+    def fail(*_a, **_k):
+        raise AssertionError("must not contact Ollama")
+
+    monkeypatch.setattr(ollama_client, "urlopen", fail)
+    assert OllamaClient(model="m", keep_alive=0).warm_up() is False
+    assert OllamaClient(model="m", keep_alive="0").warm_up() is False
